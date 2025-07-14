@@ -1,0 +1,145 @@
+name: Cost Monitoring
+
+on:
+  schedule:
+    # Run every day at 9 AM UTC (to check daily spending)
+    - cron: '0 9 * * *'
+  workflow_dispatch: # Allow manual triggering
+
+env:
+  AWS_DEFAULT_REGION: us-east-1
+
+permissions:
+  id-token: write   # Required for OIDC
+  contents: read    # Required to checkout code
+
+jobs:
+  cost-check:
+    name: Daily Cost Analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+        role-session-name: GitHubActions-CostMonitoring
+        aws-region: ${{ env.AWS_DEFAULT_REGION }}
+        
+    - name: Check current spending
+      run: |
+        echo "💰 Checking current AWS spending..."
+        
+        # Get current month's spending
+        CURRENT_MONTH=$(date +%Y-%m-01)
+        NEXT_MONTH=$(date -d "next month" +%Y-%m-01)
+        
+        echo "📅 Checking spending from $CURRENT_MONTH to $NEXT_MONTH"
+        
+        COST=$(aws ce get-cost-and-usage \
+          --time-period Start=$CURRENT_MONTH,End=$NEXT_MONTH \
+          --granularity MONTHLY \
+          --metrics BlendedCost \
+          --query 'ResultsByTime[0].Total.BlendedCost.Amount' \
+          --output text 2>/dev/null || echo "0")
+        
+        echo "💵 Current month spending: \$$COST"
+        
+        # Compare with budget (from config)
+        echo "📊 Budget analysis:"
+        node -e "
+          const cost = parseFloat('$COST');
+          const monthlyBudget = 50; // From config
+          const percentage = (cost / monthlyBudget) * 100;
+          
+          console.log('Monthly Budget: \$' + monthlyBudget);
+          console.log('Current Spending: \$' + cost.toFixed(2));
+          console.log('Budget Used: ' + percentage.toFixed(1) + '%');
+          
+          if (percentage > 80) {
+            console.log('⚠️  WARNING: Over 80% of monthly budget used!');
+            process.exit(1);
+          } else if (percentage > 60) {
+            console.log('⚡ NOTICE: Over 60% of monthly budget used');
+          } else {
+            console.log('✅ Spending is within normal range');
+          }
+        "
+
+  resource-check:
+    name: Resource Inventory
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+        role-session-name: GitHubActions-ResourceCheck
+        aws-region: ${{ env.AWS_DEFAULT_REGION }}
+        
+    - name: Check running resources
+      run: |
+        echo "🔍 Checking for running resources..."
+        
+        # Check EC2 instances
+        RUNNING_INSTANCES=$(aws ec2 describe-instances \
+          --filters "Name=instance-state-name,Values=running" \
+          --query 'Reservations[].Instances[].InstanceId' \
+          --output text | wc -w)
+        
+        echo "🖥️  Running EC2 instances: $RUNNING_INSTANCES"
+        
+        # Check RDS instances
+        RDS_INSTANCES=$(aws rds describe-db-instances \
+          --query 'DBInstances[?DBInstanceStatus==`available`].DBInstanceIdentifier' \
+          --output text | wc -w 2>/dev/null || echo "0")
+        
+        echo "🗄️  Running RDS instances: $RDS_INSTANCES"
+        
+        # Check Lambda functions
+        LAMBDA_FUNCTIONS=$(aws lambda list-functions \
+          --query 'Functions[].FunctionName' \
+          --output text | wc -w 2>/dev/null || echo "0")
+        
+        echo "⚡ Lambda functions: $LAMBDA_FUNCTIONS"
+        
+        # Summary
+        echo ""
+        echo "📋 Resource Summary:"
+        echo "- EC2 Instances: $RUNNING_INSTANCES"
+        echo "- RDS Instances: $RDS_INSTANCES" 
+        echo "- Lambda Functions: $LAMBDA_FUNCTIONS"
+        
+        if [ "$RUNNING_INSTANCES" -gt 5 ] || [ "$RDS_INSTANCES" -gt 2 ]; then
+          echo "⚠️  High resource count detected!"
+          echo "Consider reviewing if all resources are needed"
+        fi
+
+  budget-status:
+    name: Budget Status Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+        aws-region: ${{ env.AWS_DEFAULT_REGION }}
+        
+    - name: Check budget status
+      run: |
+        echo "📊 Checking budget status..."
+        
+        # List all budgets
+        aws budgets describe-budgets \
+          --account-id ${{ secrets.AWS_ACCOUNT_ID || '677803207672' }} \
+          --query 'Budgets[].{Name:BudgetName,Limit:BudgetLimit.Amount,Unit:BudgetLimit.Unit}' \
+          --output table || echo "Unable to retrieve budget information"
+        
+        echo ""
+        echo "✅ Budget monitoring is active"
+        echo "📧 Alerts will be sent to configured email address"

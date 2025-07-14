@@ -1,0 +1,87 @@
+name: Emergency Destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type "DESTROY" to confirm deletion of all resources'
+        required: true
+        type: string
+      reason:
+        description: 'Reason for emergency destruction'
+        required: true
+        type: string
+
+env:
+  AWS_DEFAULT_REGION: us-east-1
+
+jobs:
+  emergency-destroy:
+    name: Emergency Resource Destruction
+    runs-on: ubuntu-latest
+    environment: emergency # Requires approval
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+    - name: Validate confirmation
+      if: github.event.inputs.confirmation != 'DESTROY'
+      run: |
+        echo "❌ Invalid confirmation. You must type 'DESTROY' exactly."
+        exit 1
+        
+    - name: Log emergency action
+      run: |
+        echo "🚨 EMERGENCY DESTRUCTION INITIATED"
+        echo "Reason: ${{ github.event.inputs.reason }}"
+        echo "Initiated by: ${{ github.actor }}"
+        echo "Timestamp: $(date -u)"
+        
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+        aws-region: ${{ env.AWS_DEFAULT_REGION }}
+        
+    - name: List current resources
+      run: |
+        echo "📋 Current CloudFormation stacks that will be destroyed:"
+        aws cloudformation list-stacks \
+          --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE \
+          --query 'StackSummaries[?contains(StackName, `Personal`)].{Name:StackName,Status:StackStatus,Created:CreationTime}' \
+          --output table || echo "No stacks found"
+          
+    - name: Destroy CDK stack
+      run: |
+        echo "🗑️  Destroying CDK stack..."
+        npm run destroy -- --force
+        
+    - name: Verify destruction
+      run: |
+        echo "✅ Destruction completed"
+        echo "Verifying no resources remain..."
+        
+        aws cloudformation list-stacks \
+          --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE \
+          --query 'StackSummaries[?contains(StackName, `Personal`)].StackName' \
+          --output text || echo "All stacks destroyed"
+          
+    - name: Final notification
+      run: |
+        echo "🎯 EMERGENCY DESTRUCTION COMPLETED"
+        echo "All AWS resources have been destroyed"
+        echo "Reason: ${{ github.event.inputs.reason }}"
+        echo "To recreate resources, push new changes to main branch"

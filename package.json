@@ -1,0 +1,28 @@
+{
+  "name": "aws-account-management",
+  "version": "1.0.0",
+  "description": "Personal AWS account management with IAM roles and billing controls",
+  "main": "src/app.ts",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "cdk": "cdk",
+    "deploy": "cdk deploy",
+    "destroy": "cdk destroy",
+    "synth": "cdk synth",
+    "diff": "cdk diff"
+  },
+  "keywords": ["aws", "cdk", "iam", "billing", "personal"],
+  "author": "Personal",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "aws-cdk": "^2.100.0"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.100.0",
+    "constructs": "^10.3.0",
+    "aws-sdk": "^2.1400.0"
+  }
+}
